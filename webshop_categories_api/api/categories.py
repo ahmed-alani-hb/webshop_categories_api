@@ -13,6 +13,62 @@ from webshop.webshop.product_data_engine.query import ProductQuery
 from webshop.webshop.doctype.override_doctype.item_group import get_child_groups_for_website, get_parent_item_groups
 
 
+def get_category_records_custom(categories):
+	"""
+	Simplified implementation using existing webshop functions
+	Focus on item_group only since it's the main category type
+	"""
+	categorical_data = {}
+	
+	for category in categories:
+		if category == "item_group":
+			# Use direct database query for item groups - this is exactly what webshop does
+			categorical_data["item_group"] = frappe.db.get_all(
+				"Item Group",
+				filters={"show_in_website": 1},
+				fields=["name", "item_group_name", "parent_item_group", "is_group", "image", "route", "weightage"],
+				order_by="weightage DESC, name ASC"
+			)
+		else:
+			# For other category types, use basic approach
+			try:
+				website_item_meta = frappe.get_meta("Website Item", cached=True)
+				if not website_item_meta.has_field(category):
+					continue
+					
+				field = website_item_meta.get_field(category)
+				
+				if field.fieldtype == "Link" and field.options:
+					doctype = field.options
+					
+					# Check if doctype has basic fields
+					meta = frappe.get_meta(doctype, cached=True)
+					fields = ["name"]
+					
+					if meta.get_field("image"):
+						fields.append("image")
+					
+					# Check for show_in_website field
+					filters = {}
+					if meta.get_field("show_in_website"):
+						filters["show_in_website"] = 1
+					
+					categorical_data[category] = frappe.db.get_all(
+						doctype, 
+						fields=fields, 
+						filters=filters,
+						limit=100  # Reasonable limit
+					)
+				else:
+					categorical_data[category] = []
+					
+			except Exception as e:
+				frappe.log_error(f"Error fetching {category}: {str(e)}")
+				categorical_data[category] = []
+
+	return categorical_data
+
+
 @frappe.whitelist(allow_guest=True)
 def get_product_filter_data_enhanced(query_args=None):
 	"""
@@ -180,25 +236,27 @@ def get_all_categories():
 		
 		# Add other category types if field filters are enabled
 		if settings.enable_field_filters:
-			from webshop.www.shop_by_category.index import get_category_records
-			filter_categories = [row.fieldname for row in settings.filter_fields]
-			
-			# Remove item_group as we already have it
-			other_categories = [cat for cat in filter_categories if cat != 'item_group']
-			
-			if other_categories:
-				categorical_data = get_category_records(other_categories)
+			try:
+				filter_categories = [row.fieldname for row in settings.filter_fields]
 				
-				# Process image URLs for other categories
-				for category_type, items in categorical_data.items():
-					for item in items:
-						if item.get('image'):
-							item['image_url'] = base_url + item['image']
-						else:
-							item['image_url'] = None
+				# Remove item_group as we already have it
+				other_categories = [cat for cat in filter_categories if cat != 'item_group']
 				
-				result['data'].update(categorical_data)
-				result['categories'] = filter_categories
+				if other_categories:
+					categorical_data = get_category_records_custom(other_categories)
+					
+					# Process image URLs for other categories
+					for category_type, items in categorical_data.items():
+						for item in items:
+							if item.get('image'):
+								item['image_url'] = base_url + item['image']
+							else:
+								item['image_url'] = None
+					
+					result['data'].update(categorical_data)
+					result['categories'] = filter_categories
+			except Exception as e:
+				frappe.log_error(f"Error loading other categories: {str(e)}")
 		
 		return result
 		
@@ -213,43 +271,51 @@ def get_all_categories():
 @frappe.whitelist(allow_guest=True)
 def get_category_tree():
 	"""
-	Get hierarchical category tree with images and item counts
+	Get hierarchical category tree using webshop's existing functions
 	
 	Returns:
 		dict: Hierarchical category tree
 	"""
 	try:
 		def build_tree_recursive(parent_group=None):
-			"""Build category tree recursively"""
+			"""Build category tree using webshop's get_child_groups_for_website function"""
 			if parent_group:
-				filters = {
-					'show_in_website': 1,
-					'parent_item_group': parent_group
-				}
+				# Use webshop's function to get immediate children
+				categories = get_child_groups_for_website(parent_group, immediate=True)
 			else:
-				filters = {
-					'show_in_website': 1,
-					'parent_item_group': ['is', 'not set']
-				}
-			
-			categories = frappe.db.get_all(
-				'Item Group',
-				filters=filters,
-				fields=['name', 'item_group_name', 'image', 'route', 'weightage', 'description'],
-				order_by='weightage DESC, name ASC'
-			)
+				# Get root categories (no parent)
+				categories = frappe.db.get_all(
+					'Item Group',
+					filters={
+						'show_in_website': 1,
+						'parent_item_group': ['is', 'not set']
+					},
+					fields=['name', 'route'],
+					order_by='name ASC'
+				)
 			
 			base_url = get_url()
 			tree = []
 			
 			for category in categories:
+				# Get additional details for each category
+				category_details = frappe.db.get_value(
+					'Item Group',
+					category['name'],
+					['item_group_name', 'image', 'weightage', 'description'],
+					as_dict=True
+				)
+				
+				if category_details:
+					category.update(category_details)
+				
 				# Add image URL
 				if category.get('image'):
 					category['image_url'] = base_url + category['image']
 				else:
 					category['image_url'] = None
 				
-				# Add item count
+				# Add item count using same logic as webshop
 				category['item_count'] = frappe.db.count('Website Item', {
 					'item_group': category['name'],
 					'published': 1
