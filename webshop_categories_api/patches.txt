@@ -1,0 +1,2 @@
+# Patches for webshop_categories_api
+# Add patches here when needed
