@@ -13,6 +13,7 @@ depends_on = ["webshop"]
 required_apps = ["webshop"]
 
 # Override webshop API methods and add new category methods
-override_whitelisted_methods = {
-	"webshop.webshop.api.get_product_filter_data": "webshop_categories_api.api.categories.get_product_filter_data_enhanced"
-}
+#override_whitelisted_methods = {
+#	"webshop.webshop.api.get_product_filter_data": "webshop_categories_api.api.categories.get_product_filter_data_enhanced"
+#
+#}
